@@ -1,14 +1,24 @@
-use std::io::{self, Result};
+use std::io::{self, Write};
 use std::{env, fs};
 
 use clap::{Arg, ArgAction, Command};
+use color_eyre::owo_colors::OwoColorize;
+use thiserror::Error;
 
 mod options {
     pub const FILES: &str = "files";
     pub const NUMBER_NON_BLANK: &str = "number non blank lines";
     pub const NUMBER_LINES: &str = "number lines";
     pub const ADD_END_DOLLER: &str = "add `$` at the end of line";
-    pub const FAST_PRINT: &str = "fast print";
+}
+
+#[derive(Debug, Error)]
+enum RatError {
+    #[error("{0}")]
+    Io(#[from] io::Error),
+
+    #[error("{0}", "Is a Directory".red())]
+    IsDirectory,
 }
 
 struct Flags {
@@ -29,7 +39,7 @@ impl Flags {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), RatError> {
     let mut flags = Flags::new();
     let matches = app().get_matches_from(env::args_os());
 
@@ -46,8 +56,24 @@ fn main() -> Result<()> {
         flags.number_lines = true;
     }
 
+    if !flags.add_dollar_end && !flags.number_lines && !flags.number_non_blank_lines {
+        flags.fast_print = true
+    }
+
+    let mut stdout = io::stdout();
+
     for file in files {
-        print_file_lines(file, &flags)?;
+        match print_file_lines(file, &mut stdout, &flags) {
+            Err(e) => match e {
+                RatError::IsDirectory => {
+                    println!("{}", e);
+                }
+                _ => {
+                    return Err(e);
+                }
+            },
+            _ => {}
+        }
     }
 
     Ok(())
@@ -78,20 +104,20 @@ fn app() -> Command {
                 .action(ArgAction::SetTrue)
                 .overrides_with(options::ADD_END_DOLLER),
         )
-        .arg(
-            Arg::new(options::FAST_PRINT)
-                .short('f')
-                .help("prints fast")
-                .action(ArgAction::SetTrue)
-                .overrides_with(options::FAST_PRINT),
-        )
         .arg(Arg::new(options::FILES).action(ArgAction::Append))
 }
 
-fn print_file_lines(file: String, flags: &Flags) -> io::Result<()> {
+fn print_file_lines(file: String, stdout: &mut io::Stdout, flags: &Flags) -> Result<(), RatError> {
+    let fs = fs::metadata(&file)?;
+
+    if fs.is_dir() {
+        return Err(RatError::IsDirectory);
+    }
+
     let file_stirng = fs::read_to_string(file)?;
     if flags.fast_print {
-        print!("{file_stirng}")
+        writeln!(stdout, "{}", file_stirng.blue())?;
+        return Ok(());
     }
 
     let mut count = 0;
@@ -104,7 +130,8 @@ fn print_file_lines(file: String, flags: &Flags) -> io::Result<()> {
         if flags.add_dollar_end {
             line.push('$');
         }
-        println!("{line}");
+        line = line.blue().to_string();
+        writeln!(stdout, "{line}")?;
     }
 
     Ok(())
